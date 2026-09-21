@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Required so checks report back for merge-queue entries: the queue runs
+  # workflows on a temporary branch via merge_group, not pull_request.
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # There is no compiler here to catch a typo, so the shell scripts are
+      # the thing most likely to break silently. shellcheck is preinstalled on
+      # the ubuntu runner image.
+      - name: shellcheck
+        run: shellcheck setup/install.sh
+
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          # Audit the action definitions too, not only .github/workflows --
+          # this repository *is* actions, so that is most of what there is.
+          inputs: .
+          advanced-security: false

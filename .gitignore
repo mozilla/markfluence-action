@@ -1,0 +1,3 @@
+# Nothing is built here, but editors and macOS leave things behind.
+.DS_Store
+*.swp
