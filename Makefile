@@ -33,7 +33,7 @@ check: shellcheck actionlint zizmor test  ## Everything CI runs, in CI's order
 .PHONY: shellcheck
 shellcheck:  ## Lint the shell scripts
 	shellcheck --version
-	shellcheck setup/install.sh tests/install_test.sh
+	shellcheck setup/install.sh publish/publish.sh tests/*.sh
 
 # actionlint covers .github/workflows ONLY -- it reports "Collected 1 YAML
 # files" here and does not read setup/action.yml. So the `run:` block that
@@ -64,5 +64,18 @@ zizmor:  ## Audit the workflows and action definitions for security problems
 	zizmor .
 
 .PHONY: test
-test:  ## Exercise install.sh against real markfluence releases (needs network)
+test: test-install test-publish  ## Run both test suites
+
+# Needs network: it downloads real markfluence releases. Deliberate -- the
+# thing under test is a downloader, and stubbing the download would only prove
+# the stub works.
+.PHONY: test-install
+test-install:  ## Exercise setup/install.sh against real releases (needs network)
 	./tests/install_test.sh
+
+# No network and no credentials: a throwaway git repository and a fake
+# markfluence on PATH. What is under test is which files get selected and what
+# gets reported, not the publishing itself.
+.PHONY: test-publish
+test-publish:  ## Exercise publish/publish.sh with a stubbed markfluence
+	./tests/publish_test.sh
