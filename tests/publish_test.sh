@@ -40,8 +40,15 @@ contains() {
     esac
 }
 
-# new_repo builds a git repository with two commits: docs/a.md and docs/b.md
-# in the first, a change to docs/a.md only in the second. Prints its path.
+# new_repo builds a git repository with two commits: docs/a.md, docs/sub/b.md
+# and docs/notes.txt in the first, a change to docs/a.md only in the second.
+# Prints its path.
+#
+# The **subdirectory is load-bearing**. An earlier fixture had only top-level
+# files, which is exactly why a glob bug hid: with nothing for `docs/*/*.md`
+# to match, bash left the pattern intact and the pathspec worked by accident.
+# The .txt is here so a too-broad pathspec shows up as a wrong count rather
+# than passing.
 new_repo() {
     local d
     d="$(mktemp -d)"
@@ -50,9 +57,10 @@ new_repo() {
         git init -q
         git config user.email t@example.com
         git config user.name test
-        mkdir -p docs
+        mkdir -p docs/sub
         echo one > docs/a.md
-        echo two > docs/b.md
+        echo two > docs/sub/b.md
+        echo notes > docs/notes.txt
         git add -A && git commit -qm first
         echo one-changed > docs/a.md
         git add -A && git commit -qm second
@@ -92,7 +100,8 @@ run_publish() {
         mkdir -p "$RUNNER_TEMP"
         : > "$GITHUB_OUTPUT"
         : > "$GITHUB_STEP_SUMMARY"
-        export MARKFLUENCE_FILES='docs/**/*.md'
+        export MARKFLUENCE_FILES="${MARKFLUENCE_FILES:-docs/**/*.md}"
+        export GITHUB_EVENT_NAME="${GITHUB_EVENT_NAME:-push}"
         export GITHUB_SHA
         GITHUB_SHA="$(git rev-parse HEAD)"
         env "$@" bash "$SCRIPT" 2>&1
@@ -115,13 +124,22 @@ esac
 contains '--force is always passed' "$(cat "$r/argv")" '--force'
 contains '--json is always passed' "$(cat "$r/argv")" '--json'
 check 'published is read from the envelope' "$(out "$r" published)" 1
-contains 'results-json points at a file' "$(out "$r" 'results-json')" 'markfluence-results.json'
+contains 'results-json points at a file' "$(out "$r" 'results-json')" 'markfluence-results-'
 rm -rf "$r"
 
 # --- changed-only=false takes everything matching the glob ----------------
 r="$(new_repo)"; fake_markfluence "$r"
 run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false >/dev/null
-check 'changed-only=false selects both files' "$(out "$r" count)" 2
+# Two .md files across two directory levels, and NOT docs/notes.txt. This is
+# the assertion that catches both glob bugs: pathname expansion in the `for`
+# list, and a plain pathspec whose `**` skips top-level files.
+check 'the glob spans both levels and excludes non-markdown' "$(out "$r" count)" 2
+contains 'the top-level file is included' "$(cat "$r/argv")" 'docs/a.md'
+contains 'the nested file is included' "$(cat "$r/argv")" 'docs/sub/b.md'
+case "$(cat "$r/argv")" in
+    *notes.txt*) printf 'FAIL non-markdown is excluded\n'; fail=$((fail + 1)) ;;
+    *) printf 'ok   non-markdown is excluded\n'; pass=$((pass + 1)) ;;
+esac
 rm -rf "$r"
 
 # --- nothing changed: skip rather than invoke markfluence -----------------
@@ -179,7 +197,11 @@ STUB
 chmod +x "$r/bin/markfluence"
 o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false)"
 status=$?
-check 'a failing publish exits nonzero' "$status" 1
+# Asserted as non-zero rather than as 1. It really is 1 now that markfluence
+# is invoked directly, but routing it through xargs used to remap it -- GNU
+# reports 123 for a command that exited 1, BSD reports 1 -- so a hardcoded 1
+# passed locally and would have failed on the Linux legs of the matrix.
+check 'a failing publish exits nonzero' "$([ "$status" -ne 0 ] && echo nonzero || echo zero)" nonzero
 contains 'a failing file becomes an annotation' "$o" '::error file=docs/a.md::page 1 not found'
 check 'failed is read from the envelope' "$(out "$r" failed)" 1
 rm -rf "$r"
@@ -190,7 +212,128 @@ mkdir -p "$r/bin"
 printf '#!/usr/bin/env bash\necho "boom" >&2\nexit 2\n' > "$r/bin/markfluence"
 chmod +x "$r/bin/markfluence"
 o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false)"
-contains 'no-JSON exit is named' "$o" 'without emitting JSON'
+contains 'no-JSON exit is named' "$o" 'without emitting a single JSON document'
+rm -rf "$r"
+
+# --- a path with a space survives ------------------------------------------
+# git only quotes non-ASCII and control characters, not spaces, so a
+# newline-delimited list would hand markfluence two arguments here.
+r="$(new_repo)"; fake_markfluence "$r"
+(
+    cd "$r" || exit 1
+    echo spaced > "docs/release notes.md"
+    git add -A && git commit -qm spaced
+)
+run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false >/dev/null
+check 'a path with a space is one file' "$(out "$r" count)" 3
+contains 'a path with a space reaches the CLI intact' "$(cat "$r/argv")" 'docs/release notes.md'
+rm -rf "$r"
+
+# --- a path with an apostrophe survives ------------------------------------
+# This is what made xargs abort outright with "unmatched single quote".
+r="$(new_repo)"; fake_markfluence "$r"
+(
+    cd "$r" || exit 1
+    echo apos > "docs/don't.md"
+    git add -A && git commit -qm apos
+)
+run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false >/dev/null
+contains 'a path with an apostrophe reaches the CLI intact' "$(cat "$r/argv")" "docs/don't.md"
+rm -rf "$r"
+
+# --- an unrecognised boolean is refused, not guessed at --------------------
+# For both of these the wrong reading is the destructive one: publishing a
+# whole tree, or performing a real forced publish.
+r="$(new_repo)"; fake_markfluence "$r"
+o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=yes)"
+contains 'changed-only: yes is refused' "$o" 'must be true or false'
+check 'changed-only: yes never calls markfluence' "$([ -f "$r/argv" ] && echo called || echo not-called)" not-called
+rm -rf "$r"
+
+r="$(new_repo)"; fake_markfluence "$r"
+o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false MARKFLUENCE_DRY_RUN=yes)"
+contains 'dry-run: yes is refused' "$o" 'must be true or false'
+rm -rf "$r"
+
+# --- a whitespace-only files input is refused ------------------------------
+# It passes a -n check, and with no pathspec GNU xargs would run git ls-files
+# over the whole repository while BSD would skip it -- a runner-dependent
+# divergence between "publish everything" and "publish nothing".
+r="$(new_repo)"; fake_markfluence "$r"
+o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false 'MARKFLUENCE_FILES=   ')"
+contains 'a whitespace-only files input is refused' "$o" 'files: is empty'
+rm -rf "$r"
+
+# --- an event with no commit range is refused -----------------------------
+# Not read as "publish everything": a schedule force-republishing a docs tree
+# is the mass watcher-notification event changed-only exists to prevent.
+r="$(new_repo)"; fake_markfluence "$r"
+o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=true GITHUB_EVENT_NAME=schedule)"
+contains 'an event with no range is refused' "$o" 'has no commit range'
+contains 'the refusal points at since:' "$o" 'since:'
+check 'an event with no range never publishes' "$([ -f "$r/argv" ] && echo called || echo not-called)" not-called
+rm -rf "$r"
+
+# --- a pull_request uses its base sha -------------------------------------
+r="$(new_repo)"; fake_markfluence "$r"
+run_publish "$r" MARKFLUENCE_CHANGED_ONLY=true GITHUB_EVENT_NAME=pull_request \
+    "GITHUB_EVENT_PR_BASE_SHA=$(cd "$r" && git rev-parse HEAD~1)" >/dev/null
+check 'a pull_request diffs against its base' "$(out "$r" count)" 1
+rm -rf "$r"
+
+# --- changed-only=false works on a shallow clone --------------------------
+# The shallow guard belongs only where a base is actually needed; a run that
+# publishes everything never resolves a range.
+r="$(new_repo)"; fake_markfluence "$r"
+shallow="$(mktemp -d)"
+git clone -q --depth 1 "file://$r" "$shallow/repo" 2>/dev/null
+cp -R "$r/bin" "$shallow/repo/bin"
+run_publish "$shallow/repo" MARKFLUENCE_CHANGED_ONLY=false >/dev/null
+check 'a shallow clone can still publish everything' "$(out "$shallow/repo" count)" 2
+rm -rf "$r" "$shallow"
+
+# --- a shallow clone IS refused when a base is needed ---------------------
+r="$(new_repo)"; fake_markfluence "$r"
+shallow="$(mktemp -d)"
+git clone -q --depth 1 "file://$r" "$shallow/repo" 2>/dev/null
+cp -R "$r/bin" "$shallow/repo/bin"
+o="$(run_publish "$shallow/repo" MARKFLUENCE_CHANGED_ONLY=true \
+    GITHUB_EVENT_BEFORE=1111111111111111111111111111111111111111)"
+contains 'a shallow clone is refused when a base is needed' "$o" 'shallow clone'
+rm -rf "$r" "$shallow"
+
+# --- several JSON documents are refused, not half-read --------------------
+# xargs used to batch past ARG_MAX, which made markfluence emit concatenated
+# envelopes; one output line per document would corrupt $GITHUB_OUTPUT.
+r="$(new_repo)"
+mkdir -p "$r/bin"
+cat > "$r/bin/markfluence" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$ARGV_FILE"
+echo '{"summary":{"total":1,"succeeded":1,"failed":0,"skipped":0},"results":[]}'
+echo '{"summary":{"total":1,"succeeded":1,"failed":0,"skipped":0},"results":[]}'
+STUB
+chmod +x "$r/bin/markfluence"
+o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false)"
+contains 'a multi-document stream is refused' "$o" 'without emitting a single JSON document'
+check 'a multi-document stream leaves published at 0' "$(out "$r" published)" 0
+rm -rf "$r"
+
+# --- a multi-line error becomes one annotation line ------------------------
+r="$(new_repo)"
+mkdir -p "$r/bin"
+cat > "$r/bin/markfluence" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$ARGV_FILE"
+cat <<'JSON'
+{"summary":{"total":1,"succeeded":0,"failed":1,"skipped":0},
+ "results":[{"file":"docs/a.md","ok":false,"error":"line one\nline two"}]}
+JSON
+exit 1
+STUB
+chmod +x "$r/bin/markfluence"
+o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false)"
+contains 'a multi-line error is collapsed' "$o" '::error file=docs/a.md::line one line two'
 rm -rf "$r"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

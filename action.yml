@@ -17,10 +17,14 @@ inputs:
     default: 'docs/**/*.md'
   changed-only:
     description: >-
-      Publish only the files that changed in the push range, rather than
-      everything matching `files`. Leave this on. Confluence emails every
-      watcher on update, so republishing a tree mails all of them on every
-      merge.
+      Publish only the files that changed, rather than everything matching
+      `files`. Leave this on: Confluence emails every watcher on update, so
+      republishing a tree mails all of them on every merge.
+
+      Works on `push` and `pull_request`, which have a commit range. On any
+      other event -- a schedule, a workflow_dispatch -- there is no range, and
+      the run fails rather than quietly publishing everything; pass `since:`
+      there.
     required: false
     default: 'true'
   since:
@@ -89,5 +93,11 @@ runs:
         MARKFLUENCE_SINCE: ${{ inputs.since }}
         MARKFLUENCE_DRY_RUN: ${{ inputs.dry-run }}
         MARKFLUENCE_DEBUG: ${{ inputs.debug }}
+        # The commit range, per event. `before` exists only on push; a
+        # pull_request has its base sha instead. Anything else has no range at
+        # all, which the script refuses rather than reading as "publish
+        # everything" -- GITHUB_EVENT_NAME is already in the runner's
+        # environment, so it decides which of these to read.
         GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        GITHUB_EVENT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: "$GITHUB_ACTION_PATH/publish/publish.sh"

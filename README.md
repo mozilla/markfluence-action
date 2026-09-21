@@ -139,8 +139,8 @@ says so by name rather than failing on a confusing `bad object`.
 | input | default | description |
 |---|---|---|
 | `files` | `docs/**/*.md` | Which markdown to publish, as a git pathspec. Space-separate several. |
-| `changed-only` | `true` | Publish only what changed in the push range. Leave it on — see below. |
-| `since` | *(none)* | Base ref to diff against, overriding the push event's. For a `workflow_dispatch`, which has no push range. |
+| `changed-only` | `true` | Publish only what changed. Leave it on — see below. Works on `push` and `pull_request`; any other event has no commit range and the run fails rather than publishing everything. |
+| `since` | *(none)* | Base ref to diff against, overriding the event's. Required on an event with no range, such as `workflow_dispatch` or `schedule`. |
 | `dry-run` | `false` | Preview without writing to Confluence. |
 | `debug` | `false` | Log every retry decision with the rate-limit headers. |
 | `version` | `latest` | markfluence release to install. |
@@ -164,6 +164,17 @@ history with identical versions and multiplies API calls against a rate limit
 shared with everyone else on the instance.
 
 Turn it off only if you mean it.
+
+**An event with no commit range fails rather than guessing.** A `schedule` or
+a `workflow_dispatch` has no base to diff against, and treating that as
+"publish everything" would silently produce exactly the mass notification
+described above. Pass `since:` on those events, or set `changed-only: false`
+if you really do mean the whole tree.
+
+`files` is a **git pathspec**, not a shell glob — but it behaves like one:
+each pattern gets git's `:(glob)` magic, so `**` spans directories and `*`
+stops at `/`. A pattern starting with `:` is passed through untouched, so
+`:!docs/private/**` still excludes.
 
 ### `--force` is always on, and is not an input
 
