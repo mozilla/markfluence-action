@@ -81,8 +81,15 @@ platform() {
         *) die "unrecognised RUNNER_ARCH '${RUNNER_ARCH:-}'; expected X64 or ARM64" ;;
     esac
     if [ "$os" = darwin ] && [ "$arch" = amd64 ]; then
-        die "markfluence publishes no Intel macOS build: macOS 26 Tahoe is Apple's last Intel release," \
-            "so the build was dropped (#180). Use macos-latest, which is Apple Silicon, or a Linux runner."
+        # Worded carefully: markfluence *dropped* the Intel macOS build, it did
+        # not always lack one, and releases from before that change still carry
+        # a darwin_amd64 archive. Claiming none exists would be false for
+        # anyone pinning one of those. This action does not install it either
+        # way -- Intel macOS is not a supported target.
+        die "this action does not support Intel macOS. markfluence dropped the darwin/amd64 build" \
+            "because macOS 26 Tahoe is Apple's last Intel release; older releases still carry that" \
+            "archive, but it is not installed here. Use macos-latest, which is Apple Silicon, or a" \
+            "Linux runner. If you need Intel macOS: https://github.com/mozilla/markfluence-action/issues"
     fi
     printf '%s_%s' "$os" "$arch"
 }
@@ -95,7 +102,14 @@ platform() {
 # respective runners; neither exists on both.
 verify() {
     local archive="$1" sums="$2" line
-    line="$(grep -F "  ${archive}" "$sums")" ||
+    # Matched on the exact filename field, not as a substring. `grep -F
+    # "  ${archive}"` would also match a sibling whose name *extends* this one
+    # -- a detached signature or an SBOM, which goreleaser's sign and sbom
+    # pipes produce as `<archive>.sig` and `<archive>.sbom.json`. Two matching
+    # lines make the check fail on a file that was never downloaded, and the
+    # script would then report tampering for a perfectly good release.
+    line="$(awk -v name="$archive" '$2 == name' "$sums")"
+    [ -n "$line" ] ||
         die "checksums.txt has no entry for ${archive}; the release may be incomplete"
     if command -v sha256sum >/dev/null 2>&1; then
         printf '%s\n' "$line" | sha256sum --check --status - ||
@@ -110,7 +124,11 @@ verify() {
 
 main() {
     local version="${MARKFLUENCE_VERSION:-latest}"
+    # Both named here rather than failing later on `set -u`. Putting the binary
+    # on PATH is the whole point of the action, so a missing GITHUB_PATH must
+    # not surface as an unbound-variable error *after* a successful download.
     [ -n "${RUNNER_TEMP:-}" ] || die "RUNNER_TEMP is unset; this script expects to run on a GitHub Actions runner"
+    [ -n "${GITHUB_PATH:-}" ] || die "GITHUB_PATH is unset; this script expects to run on a GitHub Actions runner"
 
     if [ "$version" = latest ]; then
         version="$(resolve_version)"

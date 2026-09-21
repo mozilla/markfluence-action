@@ -17,31 +17,117 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Every runner the README claims to support. `make test` is the only thing
+    # that exercises install.sh, and the paths that differ per runner are the
+    # ones most likely to break silently: platform() maps $RUNNER_OS/$RUNNER_ARCH
+    # to goreleaser's naming, verify() picks sha256sum on Linux and shasum on
+    # macOS, and single-member extraction goes through GNU tar on one and bsdtar
+    # on the other. On ubuntu-latest alone, a regression in any of those ships
+    # green and breaks every macOS consumer.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # shellcheck is preinstalled on the runner image -- currently 0.9.0.
-      # actionlint and zizmor are pinned and installed.
+      # Every tool is version-pinned and checksum-verified: a repository whose
+      # product is a verifying installer should not fetch its own tools on
+      # trust. The Makefile prints each tool's version, so a drift shows in the
+      # log rather than as a mystery finding.
+      #
+      # shellcheck has to be installed rather than taken from the image, for
+      # two reasons. It is absent from the macOS image entirely -- so the
+      # matrix broke the moment it was added -- and on the ubuntu images it is
+      # 0.9.0, older than a typical local install and reporting a different set
+      # of findings. Pinning it fixes both: one version everywhere, and the
+      # drift the Makefile used to warn about is now local-only.
+      #
+      # shellcheck publishes no checksums file, so the digests are recorded
+      # here. Recompute them when bumping the version.
+      - name: Install shellcheck
+        env:
+          SHELLCHECK_VERSION: v0.11.0
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            Linux/X64)
+              asset=linux.x86_64
+              want=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198 ;;
+            Linux/ARM64)
+              asset=linux.aarch64
+              want=12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588 ;;
+            macOS/ARM64)
+              asset=darwin.aarch64
+              want=56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79 ;;
+            *) echo "::error::no shellcheck build mapped for $RUNNER_OS/$RUNNER_ARCH"; exit 1 ;;
+          esac
+          archive="shellcheck-${SHELLCHECK_VERSION}.${asset}.tar.xz"
+          curl -fsSLO "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/${archive}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            printf '%s  %s\n' "$want" "$archive" | sha256sum --check --status -
+          else
+            printf '%s  %s\n' "$want" "$archive" | shasum -a 256 --check --status -
+          fi
+          tar -xJf "$archive"
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 0755 "shellcheck-${SHELLCHECK_VERSION}/shellcheck" "$RUNNER_TEMP/bin/shellcheck"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          rm -rf "$archive" "shellcheck-${SHELLCHECK_VERSION}"
 
       - name: Install actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12
         run: |
           set -euo pipefail
-          curl -fsSL -o actionlint.tar.gz \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          tar -xzf actionlint.tar.gz actionlint
-          sudo install -m 0755 actionlint /usr/local/bin/actionlint
-          rm -f actionlint actionlint.tar.gz
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            Linux/X64)    plat=linux_amd64 ;;
+            Linux/ARM64)  plat=linux_arm64 ;;
+            macOS/ARM64)  plat=darwin_arm64 ;;
+            *) echo "::error::no actionlint build mapped for $RUNNER_OS/$RUNNER_ARCH"; exit 1 ;;
+          esac
+          archive="actionlint_${ACTIONLINT_VERSION}_${plat}.tar.gz"
+          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          curl -fsSLO "${base}/${archive}"
+          curl -fsSLO "${base}/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          # Exact filename field, not a substring -- the same reason
+          # setup/install.sh does it this way.
+          line="$(awk -v n="$archive" '$2 == n' "actionlint_${ACTIONLINT_VERSION}_checksums.txt")"
+          [ -n "$line" ] || { echo "::error::no checksum entry for $archive"; exit 1; }
+          # sha256sum on Linux, shasum on macOS: neither is present on both
+          # images, which is the same split verify() handles in install.sh.
+          if command -v sha256sum >/dev/null 2>&1; then
+            printf '%s\n' "$line" | sha256sum --check --status -
+          else
+            printf '%s\n' "$line" | shasum -a 256 --check --status -
+          fi
+          tar -xzf "$archive" actionlint
+          # No sudo, and no assumption about /usr/local/bin being writable:
+          # its own directory, appended to PATH the way any setup step does.
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 0755 actionlint "$RUNNER_TEMP/bin/actionlint"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          rm -f actionlint "$archive" "actionlint_${ACTIONLINT_VERSION}_checksums.txt"
 
       - name: Install zizmor
         env:
           ZIZMOR_VERSION: 1.30.1
+        # --require-hashes would mean carrying a hash for every transitive
+        # wheel, which is more maintenance than this buys; the version pin plus
+        # PyPI's own integrity is the line drawn here. Revisit if this repo ever
+        # handles secrets -- today the job is contents:read with none.
         run: pipx install "zizmor==${ZIZMOR_VERSION}"
 
+      # One target, and nothing else in this job, so what is checked here and
+      # what a developer checks locally cannot drift in *what* runs.
       - name: Check
+        env:
+          # zizmor's online audits -- known-vulnerable and stale action refs --
+          # are skipped without a token. The Makefile turns them on when it
+          # sees one.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make check

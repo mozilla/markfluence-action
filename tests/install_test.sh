@@ -18,7 +18,14 @@ pass=0
 fail=0
 
 # run_install invokes install.sh in a throwaway runner environment and prints
-# its combined output. Returns the script's exit status.
+# its combined output, followed by everything the script told the runner
+# through $GITHUB_OUTPUT and $GITHUB_PATH. Returns the script's exit status.
+#
+# The two runner files are echoed rather than only the output one, because
+# appending the install directory to $GITHUB_PATH is the entire point of a
+# setup action -- and with only $GITHUB_OUTPUT surfaced, deleting that line
+# from install.sh left the whole suite green. A consumer would have found out
+# in their next step, as `markfluence: command not found`.
 run_install() {
     local tmp
     tmp="$(mktemp -d)"
@@ -31,8 +38,14 @@ run_install() {
         export RUNNER_OS="$1" RUNNER_ARCH="$2" MARKFLUENCE_VERSION="$3"
         "$SCRIPT" 2>&1
         status=$?
-        # Surface what the script told the runner, so assertions can see it.
         cat "$GITHUB_OUTPUT"
+        # Prefixed so an assertion can tell a PATH entry from other output,
+        # and so an empty file cannot accidentally satisfy a match.
+        sed 's/^/github_path: /' "$GITHUB_PATH"
+        # Prove the thing on PATH is actually runnable, not merely named.
+        while read -r dir; do
+            [ -x "${dir}/markfluence" ] && echo "executable-on-path: ${dir}/markfluence"
+        done < "$GITHUB_PATH"
         exit $status
     )
     local status=$?
@@ -80,6 +93,11 @@ if [ -n "$HOST_OS" ]; then
     # "latest" resolves through the /releases/latest redirect, installs, and
     # passes its own smoke test.
     ok 'latest installs and smoke-tests' 0 'markfluence ' "$HOST_OS" "$HOST_ARCH" latest
+    # The headline behaviour: the install directory is appended to $GITHUB_PATH
+    # and the binary there is executable.
+    ok 'the install dir lands on GITHUB_PATH' 0 'github_path: ' "$HOST_OS" "$HOST_ARCH" latest
+    ok 'the binary on GITHUB_PATH is executable' 0 'executable-on-path: ' \
+        "$HOST_OS" "$HOST_ARCH" latest
     # A pinned tag installs that tag, and the resolved version is reported
     # back to the runner as a step output.
     ok 'a pinned tag reports itself as an output' 0 "version=${KNOWN_TAG}" \
@@ -90,7 +108,7 @@ fi
 # than on a download 404, because "404" does not tell a user whether they
 # typoed a version or picked an unsupported runner.
 ok 'Windows fails by name'    1 'no Windows build'    Windows X64   "$KNOWN_TAG"
-ok 'Intel macOS fails by name' 1 'no Intel macOS build' macOS  X64   "$KNOWN_TAG"
+ok 'Intel macOS fails by name' 1 'does not support Intel macOS' macOS X64 "$KNOWN_TAG"
 
 # An unrecognised runner is a distinct failure from an unsupported one.
 ok 'an unknown RUNNER_OS is named'   1 'unrecognised RUNNER_OS'   Plan9 X64   "$KNOWN_TAG"
@@ -108,7 +126,17 @@ ok 'a nonexistent release is named' 1 'Is that a real markfluence release?' \
 verify_case() {
     local name="$1" want_status="$2" want_text="$3" archive="$4" sums="$5"
     local out status
-    out="$(bash -c "source <(sed '/^main \"/d' '$SCRIPT'); verify '$archive' '$sums'" 2>&1)"
+    # `eval` rather than `source <(...)`: macOS ships bash 3.2 as /bin/bash,
+    # which is what a macOS runner resolves, and process substitution into
+    # `source` silently defines nothing there -- every verify case failed with
+    # "verify: command not found" while passing locally under Homebrew's bash
+    # 5. eval works on both.
+    #
+    # Paths go in as positional arguments rather than being interpolated into
+    # the command string: a checkout path containing a quote would otherwise
+    # break the command and report as a baffling test failure.
+    out="$(bash -c 'eval "$(sed "/^main \"/d" "$1")"; verify "$2" "$3"' _ \
+        "$SCRIPT" "$archive" "$sums" 2>&1)"
     status=$?
     if [ "$status" != "$want_status" ] || [[ -n "$want_text" && "$out" != *"$want_text"* ]]; then
         printf 'FAIL %s\n     exit %s (wanted %s), output: %s\n' "$name" "$status" "$want_status" "$out"
