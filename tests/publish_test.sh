@@ -100,8 +100,23 @@ run_publish() {
         mkdir -p "$RUNNER_TEMP"
         : > "$GITHUB_OUTPUT"
         : > "$GITHUB_STEP_SUMMARY"
-        export MARKFLUENCE_FILES="${MARKFLUENCE_FILES:-docs/**/*.md}"
-        export GITHUB_EVENT_NAME="${GITHUB_EVENT_NAME:-push}"
+        export MARKFLUENCE_FILES='docs/**/*.md'
+        # Set outright, NOT defaulted from the ambient value. These tests run
+        # inside GitHub Actions, where GITHUB_EVENT_NAME is already `push` or
+        # `pull_request` -- so `${GITHUB_EVENT_NAME:-push}` inherited the
+        # runner's `pull_request`, sent base_ref down the PR branch looking for
+        # a base sha that was never set, and every case fell through to
+        # "publish everything". Green locally, red on all three legs.
+        #
+        # A caller's `env "$@"` below still overrides these, which is how the
+        # schedule and pull_request cases set their own.
+        export GITHUB_EVENT_NAME=push
+        export GITHUB_EVENT_BEFORE=
+        export GITHUB_EVENT_PR_BASE_SHA=
+        export MARKFLUENCE_CHANGED_ONLY=true
+        export MARKFLUENCE_DRY_RUN=false
+        export MARKFLUENCE_DEBUG=false
+        export MARKFLUENCE_SINCE=
         export GITHUB_SHA
         GITHUB_SHA="$(git rev-parse HEAD)"
         env "$@" bash "$SCRIPT" 2>&1
