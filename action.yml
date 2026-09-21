@@ -1,0 +1,93 @@
+name: markfluence publish
+description: >-
+  Publish changed markdown files to Confluence with markfluence. Narrows a
+  glob to the files git says actually changed, so one typo fix does not
+  republish a whole docs tree.
+
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  files:
+    description: >-
+      Pathspec for the markdown to publish, before any narrowing. Multiple
+      patterns may be space-separated.
+    required: false
+    default: 'docs/**/*.md'
+  changed-only:
+    description: >-
+      Publish only the files that changed in the push range, rather than
+      everything matching `files`. Leave this on. Confluence emails every
+      watcher on update, so republishing a tree mails all of them on every
+      merge.
+    required: false
+    default: 'true'
+  since:
+    description: >-
+      Base ref to diff against, overriding the push event's own base. Useful
+      on a workflow_dispatch, where there is no push range.
+    required: false
+    default: ''
+  dry-run:
+    description: Preview what would be published without writing to Confluence.
+    required: false
+    default: 'false'
+  debug:
+    description: >-
+      Pass --debug, which logs every retry decision with the rate-limit
+      headers. Worth turning on when a run seems to hang: a rate-limited
+      request can legitimately take minutes.
+    required: false
+    default: 'false'
+  version:
+    description: >-
+      markfluence release tag to install, such as v0.1.0. Defaults to
+      "latest".
+    required: false
+    default: latest
+
+outputs:
+  count:
+    description: How many files were selected for publishing.
+    value: ${{ steps.publish.outputs.count }}
+  published:
+    description: How many pages were published.
+    value: ${{ steps.publish.outputs.published }}
+  skipped:
+    description: How many files were skipped because nothing claims them.
+    value: ${{ steps.publish.outputs.skipped }}
+  failed:
+    description: How many files failed.
+    value: ${{ steps.publish.outputs.failed }}
+  results-json:
+    description: >-
+      Path to markfluence's --json envelope, for a later step that wants the
+      per-file detail. Empty when nothing ran. The document is schema-locked;
+      `markfluence schema` prints the schema.
+    value: ${{ steps.publish.outputs.results-json }}
+
+runs:
+  using: composite
+  steps:
+    # Shares setup's installer rather than calling that action: a relative
+    # `uses: ./setup` inside a composite action resolves against
+    # $GITHUB_WORKSPACE, the consumer's checkout (actions/runner#1348).
+    - shell: bash
+      env:
+        MARKFLUENCE_VERSION: ${{ inputs.version }}
+      run: "$GITHUB_ACTION_PATH/setup/install.sh"
+
+    - id: publish
+      shell: bash
+      # Every input crosses into the script through env, never by
+      # interpolating ${{ }} into the run block -- that is template injection,
+      # and `files` reaches a shell.
+      env:
+        MARKFLUENCE_FILES: ${{ inputs.files }}
+        MARKFLUENCE_CHANGED_ONLY: ${{ inputs.changed-only }}
+        MARKFLUENCE_SINCE: ${{ inputs.since }}
+        MARKFLUENCE_DRY_RUN: ${{ inputs.dry-run }}
+        MARKFLUENCE_DEBUG: ${{ inputs.debug }}
+        GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+      run: "$GITHUB_ACTION_PATH/publish/publish.sh"
