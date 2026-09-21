@@ -1,0 +1,143 @@
+name: Smoke test
+
+# Steps 2 and 6 of docs/releasing.md: run the actions the way a consumer runs
+# them, before tagging and after releasing.
+#
+# `make check` exercises the scripts directly with a stubbed markfluence. It
+# cannot exercise the composite actions -- whether an input reaches its
+# script, whether $GITHUB_ACTION_PATH resolves, whether an output propagates
+# -- because a composite action only exists inside a workflow. This is the
+# only test of that.
+#
+# It is three jobs rather than one input because **`uses:` cannot take an
+# expression**: GitHub requires a literal ref. So each ref worth testing gets
+# its own job, and the one that needs a tag to exist is gated.
+on:
+  workflow_dispatch:
+    inputs:
+      major:
+        description: >-
+          Also test the major tag (v1). Leave this off until a release exists
+          -- `uses:` against a ref that is not there fails the job outright.
+          Turn it on for step 6, after tagging and publishing the release.
+        type: boolean
+        required: false
+        default: false
+
+# Manual and idempotent: every job installs a binary and publishes nothing, so
+# concurrent runs cannot interfere. No concurrency group on purpose.
+permissions:
+  # Only to check out the repository. Nothing here writes, and nothing needs a
+  # token -- being credential-free is the point.
+  contents: read
+
+jobs:
+  # The local path, which resolves against this workflow's own checkout. The
+  # only job that can test a **branch**, so it is what to use before merging.
+  #
+  # It is also the least faithful: a local action shares the workspace with the
+  # code under test, where a consumer's is fetched into a separate _actions/
+  # checkout. `at-main` is the one that covers that.
+  at-ref:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: echo "::notice::testing the actions as checked out at ${GITHUB_SHA}"
+      - id: setup
+        uses: ./setup # zizmor: ignore[self-repository]
+      - name: Check setup
+        env:
+          SETUP_VERSION: ${{ steps.setup.outputs.version }}
+        run: |
+          set -euo pipefail
+          markfluence --version
+          [ -n "$SETUP_VERSION" ] || { echo "::error::setup reported no version output"; exit 1; }
+      - id: publish
+        uses: ./ # zizmor: ignore[self-repository]
+        with:
+          files: this-matches-nothing/**/*.md
+          changed-only: false
+      - name: Check publish outputs
+        env:
+          COUNT: ${{ steps.publish.outputs.count }}
+          PUBLISHED: ${{ steps.publish.outputs.published }}
+          FAILED: ${{ steps.publish.outputs.failed }}
+        run: |
+          set -euo pipefail
+          # An empty count means the output never propagated, which is the
+          # failure this workflow exists to catch. "0" is the pass.
+          for pair in "count=$COUNT" "published=$PUBLISHED" "failed=$FAILED"; do
+            [ "${pair#*=}" = 0 ] || { echo "::error::${pair}, expected 0"; exit 1; }
+          done
+
+  # The faithful path: fetched from this repository at a ref, into its own
+  # _actions/ checkout, exactly as a consumer gets it. `main` is the release
+  # candidate, because step 1 of the runbook requires landing there first.
+  #
+  # The refs below are deliberately UNPINNED, which is why zizmor's
+  # unpinned-uses is ignored on each: a moving ref is the thing under test.
+  # Pinning them to a SHA would test something no consumer resolves and defeat
+  # both this job and `at-major`.
+  at-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: setup
+        uses: mozilla/markfluence-action/setup@main # zizmor: ignore[unpinned-uses]
+      - name: Check setup
+        env:
+          SETUP_VERSION: ${{ steps.setup.outputs.version }}
+        run: |
+          set -euo pipefail
+          markfluence --version
+          [ -n "$SETUP_VERSION" ] || { echo "::error::setup reported no version output"; exit 1; }
+      - id: publish
+        uses: mozilla/markfluence-action@main # zizmor: ignore[unpinned-uses]
+        with:
+          files: this-matches-nothing/**/*.md
+          changed-only: false
+      - name: Check publish outputs
+        env:
+          COUNT: ${{ steps.publish.outputs.count }}
+        run: |
+          set -euo pipefail
+          [ "$COUNT" = 0 ] || { echo "::error::count was '${COUNT}', expected 0"; exit 1; }
+
+  # What consumers actually resolve. Gated, because `uses:` against a tag that
+  # does not exist fails the job -- and a skipped job never fetches its action,
+  # so this stays green until asked for.
+  at-major:
+    if: inputs.major
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: setup
+        uses: mozilla/markfluence-action/setup@v1 # zizmor: ignore[unpinned-uses]
+      - name: Check setup
+        env:
+          SETUP_VERSION: ${{ steps.setup.outputs.version }}
+        run: |
+          set -euo pipefail
+          markfluence --version
+          [ -n "$SETUP_VERSION" ] || { echo "::error::setup reported no version output"; exit 1; }
+          echo "::notice::v1 installed markfluence ${SETUP_VERSION}"
+      - id: publish
+        uses: mozilla/markfluence-action@v1 # zizmor: ignore[unpinned-uses]
+        with:
+          files: this-matches-nothing/**/*.md
+          changed-only: false
+      - name: Check publish outputs
+        env:
+          COUNT: ${{ steps.publish.outputs.count }}
+        run: |
+          set -euo pipefail
+          [ "$COUNT" = 0 ] || { echo "::error::count was '${COUNT}', expected 0"; exit 1; }

@@ -13,6 +13,12 @@ Two actions, because they answer different questions:
 This split facilitates a convenient publish action step and also allows for
 other use cases.
 
+> [!IMPORTANT]
+> **Mozilla repositories:** the org restricts which actions may run, and
+> `mozilla/markfluence-action` is not yet on the allowlist — so `uses:` will
+> be refused until it is added. See
+> [docs/releasing.md](docs/releasing.md#prerequisite-the-org-actions-allowlist).
+
 ## setup
 
 ```yaml
@@ -268,6 +274,10 @@ on your `PATH`.
 so it needs network access. That is deliberate: the thing under test is a
 downloader, and a test that stubbed the download would only prove the stub
 works.
+
+## Releasing
+
+For maintainers: [docs/releasing.md](docs/releasing.md).
 
 ## License
 

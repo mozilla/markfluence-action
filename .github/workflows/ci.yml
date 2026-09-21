@@ -7,6 +7,10 @@ on:
   # Required so checks report back for merge-queue entries: the queue runs
   # workflows on a temporary branch via merge_group, not pull_request.
   merge_group:
+  # Called by release.yml, so a tag is gated by exactly the checks a pull
+  # request is gated by -- one definition of "green", and one place the three
+  # pinned tool versions are maintained.
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
