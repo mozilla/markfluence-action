@@ -13,55 +13,6 @@ Two actions, because they answer different questions:
 This split facilitates a convenient publish action step and also allows for
 other use cases.
 
-## setup
-
-```yaml
-- uses: mozilla/markfluence-action/setup@v1
-  with:
-    version: v0.1.0        # optional; defaults to "latest"
-
-- run: markfluence check docs/**/*.md
-```
-
-| input | default | description |
-|---|---|---|
-| `version` | `latest` | Release tag to install, such as `v0.1.0`. |
-
-| output | description |
-|---|---|
-| `version` | The tag actually installed, resolved if you asked for `latest`. |
-
-It downloads the release archive, verifies it against the release's
-`checksums.txt`, extracts the binary, and runs `markfluence --version` as a
-smoke test — so a bad asset fails in this step rather than three steps later
-in the middle of a publish.
-
-## Pinning
-
-There are **two independent things to pin**, and they come from different
-places:
-
-| | pinned by | decides |
-|---|---|---|
-| the action code | the git ref in `uses:` | how the action works |
-| the markfluence binary | the `version:` input | which markfluence you get |
-
-```yaml
-- uses: mozilla/markfluence-action/setup@v1   # <- this repository's tags
-  with:
-    version: v0.1.0                            # <- markfluence's release tags
-```
-
-This allows us to ship fixes to the GitHub action separate from markfluence
-releases.
-
-**`uses` takes a markfluence-action tag or commit SHA.** The tag can be a
-specific version or the moving `v1` major version tag.
-
-**`version` takes a markfluence release tag or `latest`.** Leaving `version` at
-`latest` is a reasonable default — it resolves to markfluence's most recent
-published release — but pin it if you want a run to be reproducible.
-
 ## Supported runners
 
 | runner | supported |
@@ -80,7 +31,7 @@ what to use instead.
 ## Credentials
 
 markfluence reads `CONFLUENCE_URL` (secret), `CONFLUENCE_USERNAME` (secret) and
-`CONFLUENCE_TOKEN` (secret)from the environment, plus `CONFLUENCE_CLOUD_ID`
+`CONFLUENCE_TOKEN` (secret) from the environment, plus `CONFLUENCE_CLOUD_ID`
 (not a secret) for a scoped token.
 
 Example:
@@ -96,7 +47,12 @@ Example:
     CONFLUENCE_CLOUD_ID: ${{ vars.CONFLUENCE_CLOUD_ID }}
 ```
 
-## publish
+See also:
+
+* [Using with GitHub Actions](https://github.com/mozilla/markfluence/blob/main/docs/github-actions.md)
+* [Scoped tokens and service accounts](https://github.com/mozilla/markfluence/blob/main/README.md#scoped-tokens-and-service-accounts)
+
+## mozilla/markfluence-action (publish)
 
 This publishes every markdown file that changed, matches `files` argument, and
 names a Confluence page — via a page_id in its frontmatter or an entry in
@@ -251,6 +207,55 @@ the id, and let CI update from then on.
 
 **It never deletes.** The file list excludes deletions
 (`--diff-filter=ACMRT`), so removing a markdown file leaves its page alone.
+
+## mozilla/markfluence-action/setup (general)
+
+```yaml
+- uses: mozilla/markfluence-action/setup@v1
+  with:
+    version: v0.1.0        # optional; defaults to "latest"
+
+- run: markfluence check docs/**/*.md
+```
+
+| input | default | description |
+|---|---|---|
+| `version` | `latest` | Release tag to install, such as `v0.1.0`. |
+
+| output | description |
+|---|---|
+| `version` | The tag actually installed, resolved if you asked for `latest`. |
+
+It downloads the release archive, verifies it against the release's
+`checksums.txt`, extracts the binary, and runs `markfluence --version` as a
+smoke test — so a bad asset fails in this step rather than three steps later
+in the middle of a publish.
+
+## Pinning
+
+There are **two independent things to pin**, and they come from different
+places:
+
+| | pinned by | decides |
+|---|---|---|
+| the action code | the git ref in `uses:` | how the action works |
+| the markfluence binary | the `version:` input | which markfluence you get |
+
+```yaml
+- uses: mozilla/markfluence-action/setup@v1   # <- this repository's tags
+  with:
+    version: v0.1.0                            # <- markfluence's release tags
+```
+
+This allows us to ship fixes to the GitHub action separate from markfluence
+releases.
+
+**`uses` takes a markfluence-action tag or commit SHA.** The tag can be a
+specific version or the moving `v1` major version tag.
+
+**`version` takes a markfluence release tag or `latest`.** Leaving `version` at
+`latest` is a reasonable default — it resolves to markfluence's most recent
+published release — but pin it if you want a run to be reproducible.
 
 ## Developing
 
