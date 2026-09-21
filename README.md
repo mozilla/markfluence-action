@@ -10,8 +10,8 @@ Two actions, because they answer different questions:
 - **`mozilla/markfluence-action`** is the opinionated publish action: it
   narrows a glob to the files git says actually changed, and publishes those.
 
-This split facilitates a simple publish action step and also allows for other
-use cases.
+This split facilitates a convenient publish action step and also allows for
+other use cases.
 
 ## setup
 
@@ -43,7 +43,7 @@ places:
 
 | | pinned by | decides |
 |---|---|---|
-| the action code | the git ref in `uses:` | how the install works |
+| the action code | the git ref in `uses:` | how the action works |
 | the markfluence binary | the `version:` input | which markfluence you get |
 
 ```yaml
@@ -52,17 +52,15 @@ places:
     version: v0.1.0                            # <- markfluence's release tags
 ```
 
-They are separate tag namespaces in separate repositories, which is
-deliberate: a fix to the installer ships without waiting for a markfluence
-release, and a markfluence release needs no change here.
+This allows us to ship fixes to the GitHub action separate from markfluence
+releases.
 
-Pin the `uses:` ref to a tag or a commit SHA. Leaving `version` at `latest`
-is a reasonable default — it resolves to markfluence's most recent published
-release — but pin it too if you want a run to be reproducible.
+**`uses` takes a markfluence-action tag or commit SHA.** The tag can be a
+specific version or the moving `v1` major version tag.
 
-**`version` takes a markfluence *release* tag, not a moving alias.**
-`uses: …@v1` works because git resolves a moving tag; `version: v1` does not,
-because there is no markfluence release by that name.
+**`version` takes a markfluence release tag or `latest`.** Leaving `version` at
+`latest` is a reasonable default — it resolves to markfluence's most recent
+published release — but pin it if you want a run to be reproducible.
 
 ## Supported runners
 
@@ -77,16 +75,15 @@ because there is no markfluence release by that name.
 markfluence publishes no Windows build, and no Intel macOS build since
 [macOS 26 Tahoe became Apple's last Intel release](https://support.apple.com/en-us/122867).
 Both fail with a named error rather than a download 404, so the message says
-what to use instead. If you need either,
-[open an issue](https://github.com/mozilla/markfluence-action/issues).
+what to use instead.
 
 ## Credentials
 
-markfluence reads `CONFLUENCE_URL`, `CONFLUENCE_USERNAME` and
-`CONFLUENCE_TOKEN` from the environment, plus `CONFLUENCE_CLOUD_ID` for a
-scoped token. **The token is never an action input** — it stays a secret in
-`env:`, which is also how the CLI is built: it refuses to accept a token as a
-command-line flag at all.
+markfluence reads `CONFLUENCE_URL` (secret), `CONFLUENCE_USERNAME` (secret) and
+`CONFLUENCE_TOKEN` (secret)from the environment, plus `CONFLUENCE_CLOUD_ID`
+(not a secret) for a scoped token.
+
+Example:
 
 ```yaml
 - uses: mozilla/markfluence-action/setup@v1
@@ -100,6 +97,12 @@ command-line flag at all.
 ```
 
 ## publish
+
+This publishes every markdown file that changed, matches `files` argument, and
+names a Confluence page — via a page_id in its frontmatter or an entry in
+`markfluence.yaml`. A file that names no page is skipped, not failed, so a
+repository that has markdown files that aren't intended to be published to
+Confluence does the right hings and doesn't cause errors.
 
 ```yaml
 name: Publish docs to Confluence
@@ -153,28 +156,55 @@ says so by name rather than failing on a confusing `bad object`.
 | `failed` | Files that failed. |
 | `results-json` | Path to markfluence's `--json` envelope, for a later step. Empty when nothing ran. |
 
+### How `files` works
+
+`files` takes one or more **git pathspecs**, separated by spaces. They are not
+shell globs, but they behave like them: each pattern gets git's `:(glob)`
+magic, so `**` spans zero or more directories and `*` stops at `/`.
+
+| value | matches |
+|---|---|
+| `docs/**/*.md` | every `.md` under `docs/`, at any depth including the top level |
+| `docs/*.md` | only the top level of `docs/` |
+| `**/*.md` | every `.md` in the repository |
+| `docs/**/*.md runbooks/**/*.md` | both trees |
+| `docs/**/*.md :!docs/private/**` | the first, minus the second |
+
+A pattern starting with `:` is passed through untouched, which is what makes
+that last row work: `:!` is git's exclusion magic, and any other pathspec
+magic (`:(icase)`, `:(top)`) works the same way.
+
+Two limits worth knowing:
+
+- **A pattern cannot contain a space**, because the input is split on
+  whitespace. `'my docs/*.md'` becomes two patterns and matches nothing
+  useful. Matched *paths* may contain spaces — `docs/release notes.md`
+  publishes fine — it is only the pattern that cannot.
+- **Only tracked files match.** git does not see an untracked file, so a
+  brand-new markdown file that has not been committed is not published. That
+  is never an issue in CI, where the checkout is clean, but it will surprise
+  you running the action locally.
+
+Paths are relative to the repository root.
+
 ### Why `changed-only` defaults to on
 
-`paths:` on the trigger decides whether the *job* runs. It does not narrow the
-glob. So publishing everything matching `files` on every merge means one typo
-fix republishes the whole tree — and **Confluence emails every watcher on
-update**, so a change to one page mails everyone watching any of two hundred.
-That is the cost that gets a publishing bot switched off. It also fills page
-history with identical versions and multiplies API calls against a rate limit
-shared with everyone else on the instance.
+`paths:` on the trigger decides whether the *job* runs but doesn't affect the
+files that get published.
 
-Turn it off only if you mean it.
+`files` specifies all the possible files in the repository that could be
+published after a merge.
+
+`changed-only` ensures that only the files listed in `files` that actually
+changed are published. Otherwise every merge republishes the whole tree to
+Confluence creating a new version of the page and emailing every watcher.
+**Turn it off only if you mean it.**
 
 **An event with no commit range fails rather than guessing.** A `schedule` or
 a `workflow_dispatch` has no base to diff against, and treating that as
 "publish everything" would silently produce exactly the mass notification
 described above. Pass `since:` on those events, or set `changed-only: false`
 if you really do mean the whole tree.
-
-`files` is a **git pathspec**, not a shell glob — but it behaves like one:
-each pattern gets git's `:(glob)` magic, so `**` spans directories and `*`
-stops at `/`. A pattern starting with `:` is passed through untouched, so
-`:!docs/private/**` still excludes.
 
 ### `--force` is always on, and is not an input
 
