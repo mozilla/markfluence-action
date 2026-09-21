@@ -15,9 +15,11 @@ other use cases.
 
 > [!IMPORTANT]
 > **Mozilla repositories:** the org restricts which actions may run, and
-> `mozilla/markfluence-action` is not yet on the allowlist — so `uses:` will
-> be refused until it is added. See
-> [docs/releasing.md](docs/releasing.md#prerequisite-the-org-actions-allowlist).
+> `mozilla/markfluence-action` is not on the allowlist. Whether that refuses a
+> consumer is **untested** — see
+> [#4](https://github.com/mozilla/markfluence-action/issues/4). If `uses:` is
+> rejected by policy, that is why, and adding the pattern needs org-admin
+> access.
 
 ## setup
 

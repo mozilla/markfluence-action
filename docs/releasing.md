@@ -24,17 +24,31 @@ naming `mozilla/tf-actions/matrixify@main` and `mozilla-it/deploy-actions/...`
 explicitly is strong evidence that mozilla-owned actions are **not**
 blanket-allowed.
 
-Two consequences:
+**A reference to this repository's own actions is exempt.** Measured:
+`smoke.yml`'s `at-main` job passed with
+`Download action repository 'mozilla/markfluence-action@main'`, so the
+`owner/repo@ref` form pointing at the same repository is allowed even though
+the pattern is absent from the list. GitHub documents that for `./` and `$/`
+and is silent about this form; it behaves the same way.
 
-- `smoke.yml`'s `at-main` and `at-major` jobs may fail with an allowlist error
-  rather than a real result. The first dispatch after this lands is the test —
-  a `workflow_dispatch` workflow has to be on the default branch before it can
-  be dispatched at all, so it has never run.
-- **More importantly, this gates adoption.** Any Mozilla repository wanting
-  `uses: mozilla/markfluence-action@v1` faces the same policy, so unless
-  `mozilla/markfluence-action@*` is added to the org allowlist the action is
-  unusable inside Mozilla however well it works. That needs **org-admin**
-  access; repo admin is not enough.
+**What is still unknown is whether a *consumer* can use it**, and that is the
+part that matters. A consumer is a different repository, which is a different
+case, and nothing here can test it — every job in `smoke.yml` is same-repo by
+construction, `at-major` included. The evidence is circumstantial: the
+allowlist names `mozilla/tf-actions/matrixify@main` and
+`mozilla-it/deploy-actions/...` explicitly, which it would not need to if
+mozilla-owned actions were blanket-allowed cross-repo.
+
+If the policy does refuse a consumer, the action is unusable inside Mozilla
+however well it works, and fixing it needs **org-admin** access — repo admin
+is not enough. Answering it takes one throwaway workflow in another
+repository:
+
+```yaml
+- uses: mozilla/markfluence-action/setup@main
+```
+
+Tracked as [#4](https://github.com/mozilla/markfluence-action/issues/4).
 
 Check the current state with:
 
