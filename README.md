@@ -129,7 +129,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0        # both ends of the push range have to be present
 
