@@ -1,0 +1,134 @@
+name: Release
+
+# Cutting a release is docs/releasing.md. This is the half that runs in CI.
+on:
+  push:
+    # Three components, deliberately: it keeps a stray `v1.2` or `release-1`
+    # from starting a release at all.
+    #
+    # NOT to prevent the major tag this workflow pushes from re-entering it --
+    # that cannot happen anyway, because GitHub does not start workflow runs
+    # for events triggered by the automatic GITHUB_TOKEN. An earlier version
+    # of this comment claimed otherwise, which would have invited someone to
+    # relax the glob once they noticed the stated hazard was imaginary.
+    tags: ['v*.*.*']
+
+# Serialized on the major tag rather than on the ref, which is what ci.yml
+# keys on. Two tags pushed together -- a backport beside a new minor, or a
+# re-push while an earlier run is still going -- would otherwise be two
+# independent runs racing to force-push the same major tag, and both could
+# read the same "current" target before either wrote, so the monotonicity
+# check alone would not save them.
+#
+# KNOWN LIMIT: GitHub keeps at most one *pending* run per group, so pushing
+# three or more tags at once cancels the middle ones -- and a cancelled run
+# renders neutral-grey, not red, so nothing announces that a release was never
+# checked. Push tags one at a time; docs/releasing.md says so. The group
+# cannot be keyed per major either: expressions have no split or regex, so
+# `v1` cannot be extracted from `v1.2.3` here.
+concurrency:
+  group: major-tag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Exactly the checks a pull request gets, against the tagged commit rather
+  # than against a branch. A tag can be pushed at any commit, so this is what
+  # makes "it passed CI" true of the thing being released.
+  check:
+    # `./` rather than GitHub's newer `$/` self-repository syntax, which zizmor
+    # prefers: actionlint 1.7.12 does not know `$/` and fails on it, so the two
+    # linters `make check` runs cannot both be satisfied. `./` is the
+    # long-established form and works; revisit when actionlint catches up.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+
+  # The moving major tag -- `v1` for any `v1.x.y` -- is what consumers pin to,
+  # and it is the only mutable thing this repository publishes. Moved here
+  # rather than by hand so it cannot be forgotten, and only after `check` has
+  # passed, so a red release leaves consumers on the previous version.
+  major-tag:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # This job pushes a tag over git, so it does need the credential
+          # checkout leaves behind -- the one place in this repository that is
+          # true.
+          persist-credentials: true
+
+      - name: Move the major tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # An anchored regex, NOT a `case` glob. `v[0-9]*.[0-9]*.[0-9]*`
+          # matches v1.0.0rc1, v1.2.3beta, v1.2.3+build.5 and v1.2.3.4 -- none
+          # of which contain a dash, so a dash test does not catch them either
+          # -- and v1abc.2.3, which would have force-pushed a tag literally
+          # named `v1abc`. Measured against seventeen spellings.
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            : # a plain release: this is the only shape that moves a major tag
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+[-+] ]]; then
+            # Accepted, and a green no-op. A prerelease or a build-metadata tag
+            # is released like anything else, but every consumer pinned to the
+            # major tag would otherwise be running a release candidate.
+            echo "::notice::${TAG} is not a plain release; leaving the major tag where it is"
+            exit 0
+          else
+            echo "::error::${TAG} is not a version tag this workflow understands; refusing to move a major tag"
+            exit 1
+          fi
+
+          # The commit resolved ONCE, from what triggered this run, and never
+          # from refs/tags/$TAG.
+          #
+          # That distinction is a real bypass, not fastidiousness. checkout
+          # with fetch-depth: 0 fetches refs/tags/*, so refs/tags/$TAG locally
+          # is whatever the *remote* held when the job started -- not what the
+          # run was triggered for. Delete and re-push $TAG at an unreviewed
+          # commit while the three-runner check job is still going, and the
+          # ancestry gate below would pass on the original commit while the
+          # move landed on the new one, which nothing had checked.
+          #
+          # ^{commit} peels it, because GITHUB_SHA for an annotated tag push
+          # can be the tag object rather than a commit -- the same peel the
+          # major tag itself needs, or git starts reporting
+          # "tag 'v1' is externally known as 'v1.2.3'".
+          sha="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+
+          # Only a commit that is on main. Passing `make check` is not the same
+          # as having been reviewed, and anyone with write access can tag an
+          # unreviewed local commit -- which would put the major tag on code
+          # that never went through the pull request main's ruleset requires.
+          git fetch -q origin main
+          git merge-base --is-ancestor "$sha" origin/main ||
+            { echo "::error::${TAG} (${sha}) is not an ancestor of main; refusing to move a major tag"; exit 1; }
+
+          major="${TAG%%.*}"
+
+          # Never backwards. Tagging a backport v1.2.4 after v1.3.0 has shipped
+          # would otherwise move the major tag *down*, silently downgrading
+          # every consumer pinned to it, with a green run and no notice.
+          #
+          # This is also what makes two concurrent releases safe rather than
+          # merely serialized: the loser is refused loudly instead of
+          # overwriting the winner.
+          if current="$(git rev-parse -q --verify "refs/tags/${major}^{commit}")"; then
+            git merge-base --is-ancestor "$current" "$sha" ||
+              { echo "::error::${major} points at ${current}, which is not an ancestor of ${TAG}." \
+                     "Refusing to move it backwards -- this looks like a backport."; exit 1; }
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -f "$major" "$sha"
+          git push -f origin "refs/tags/${major}"
+          echo "::notice::${major} now points at ${TAG} (${sha})"

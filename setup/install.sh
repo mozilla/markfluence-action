@@ -31,11 +31,15 @@ die() {
 # the API would need a token to avoid a shared unauthenticated rate limit, and
 # a setup action that demands a token just to install a binary is a bad trade.
 #
-# This is only trustworthy because the release workflow creates each release as
-# a draft and publishes it last -- /releases/latest is the most recent
-# *published* non-prerelease and does not care whether its assets finished
-# uploading. Without that, a half-failed release would be what "latest"
-# resolves to. See docs/releasing.md.
+# This is only trustworthy because **markfluence's** release workflow creates
+# each release as a draft and publishes it last -- /releases/latest is the most
+# recent *published* non-prerelease and does not care whether its assets
+# finished uploading. Without that, a half-failed release would be what
+# "latest" resolves to.
+#
+# That is mozilla/markfluence's docs/releasing.md, NOT this repository's. This
+# one publishes directly, because there are no assets to upload and so nothing
+# to be half-finished.
 resolve_version() {
     local url
     url="$(curl -fsSIL -o /dev/null -w '%{url_effective}' \
