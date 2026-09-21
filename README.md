@@ -141,7 +141,7 @@ says so by name rather than failing on a confusing `bad object`.
 
 | input | default | description |
 |---|---|---|
-| `files` | `docs/**/*.md` | Which markdown to publish, as a git pathspec. Space-separate several. |
+| `files` | `docs/**/*.md` | Which markdown to publish, as one or more git pathspecs. See [How `files` works](#how-files-works). |
 | `changed-only` | `true` | Publish only what changed. Leave it on — see below. Works on `push` and `pull_request`; any other event has no commit range and the run fails rather than publishing everything. |
 | `since` | *(none)* | Base ref to diff against, overriding the event's. Required on an event with no range, such as `workflow_dispatch` or `schedule`. |
 | `dry-run` | `false` | Preview without writing to Confluence. |
@@ -175,18 +175,45 @@ A pattern starting with `:` is passed through untouched, which is what makes
 that last row work: `:!` is git's exclusion magic, and any other pathspec
 magic (`:(icase)`, `:(top)`) works the same way.
 
-Two limits worth knowing:
+Three limits worth knowing:
 
 - **A pattern cannot contain a space**, because the input is split on
   whitespace. `'my docs/*.md'` becomes two patterns and matches nothing
-  useful. Matched *paths* may contain spaces — `docs/release notes.md`
-  publishes fine — it is only the pattern that cannot.
+  useful, and the multi-line form does not change that — splitting happens
+  within a line as well as between lines. Matched *paths* may contain spaces
+  (`docs/release notes.md` publishes fine); it is only the pattern that
+  cannot.
+- **Value must be a scalar**, because GitHub requires every `with:` value to be
+  a scalar, so `files:` followed by `- docs/a.md` is rejected before this
+  action sees it.
 - **Only tracked files match.** git does not see an untracked file, so a
   brand-new markdown file that has not been committed is not published. That
   is never an issue in CI, where the checkout is clean, but it will surprise
   you running the action locally.
 
+Patterns can be on one line:
+
+```yaml
+with:
+  files: docs/**/*.md runbooks/**/*.md :!docs/private/**
+```
+
+Or multiple lines with `|`:
+
+```yaml
+with:
+  files: |
+    docs/**/*.md
+    runbooks/**/*.md
+    :!docs/private/**
+```
+
 Paths are relative to the repository root.
+
+References:
+
+* [git pathspec](https://git-scm.com/docs/gitglossary#Documentation/gitglossary.txt-aiddefpathspecapathspec)
+* [with: workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepswith)
 
 ### Why `changed-only` defaults to on
 

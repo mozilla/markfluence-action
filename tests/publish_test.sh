@@ -351,5 +351,25 @@ o="$(run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false)"
 contains 'a multi-line error is collapsed' "$o" '::error file=docs/a.md::line one line two'
 rm -rf "$r"
 
+# --- the multi-line form of `files` -----------------------------------------
+# A YAML block scalar arrives as a newline-separated string. It works without
+# any special handling because bash's default IFS includes newline, and the
+# README documents it, so it needs a test to stay true.
+r="$(new_repo)"; fake_markfluence "$r"
+run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false 'MARKFLUENCE_FILES=docs/a.md
+docs/sub/b.md' >/dev/null
+check 'a newline-separated files input selects both' "$(out "$r" count)" 2
+contains 'the first line is honoured' "$(cat "$r/argv")" 'docs/a.md'
+contains 'the second line is honoured' "$(cat "$r/argv")" 'docs/sub/b.md'
+rm -rf "$r"
+
+# --- exclusion magic in the multi-line form --------------------------------
+r="$(new_repo)"; fake_markfluence "$r"
+run_publish "$r" MARKFLUENCE_CHANGED_ONLY=false 'MARKFLUENCE_FILES=docs/**/*.md
+:!docs/sub/**' >/dev/null
+check 'exclusion on its own line still excludes' "$(out "$r" count)" 1
+contains 'the kept file is the top-level one' "$(cat "$r/argv")" 'docs/a.md'
+rm -rf "$r"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
