@@ -1,0 +1,38 @@
+name: Setup markfluence
+description: >-
+  Install the markfluence CLI on a runner and put it on PATH, so later steps
+  can call any markfluence command.
+
+# No `branding:`. The Marketplace lists one action per repository and only the
+# one at the root, so branding here would never be shown. The publish action
+# at the repository root carries it.
+
+inputs:
+  version:
+    description: >-
+      Release tag to install, such as v1.2.3. Defaults to "latest", which
+      resolves to the most recent published release. Pin a tag if you want
+      reproducible runs.
+    required: false
+    default: latest
+
+outputs:
+  version:
+    description: The tag that was actually installed, resolved if you asked for "latest".
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      # The input crosses into the script through env, never by interpolating
+      # ${{ }} into the run block -- that is template injection, and it is what
+      # zizmor's audit exists to catch.
+      env:
+        MARKFLUENCE_VERSION: ${{ inputs.version }}
+      # $GITHUB_ACTION_PATH is this repository's checkout, which is what makes
+      # a shared script work where a nested `uses: ./…` does not: a relative
+      # action path resolves against the consumer's workspace instead
+      # (actions/runner#1348).
+      run: "$GITHUB_ACTION_PATH/install.sh"
