@@ -168,6 +168,7 @@ magic, so `**` spans zero or more directories and `*` stops at `/`.
 | `docs/*.md` | only the top level of `docs/` |
 | `**/*.md` | every `.md` in the repository |
 | `docs/**/*.md runbooks/**/*.md` | both trees |
+| `docs/a.md docs/b.md` | exactly those two files, and nothing else |
 | `docs/**/*.md :!docs/private/**` | the first, minus the second |
 
 A pattern starting with `:` is passed through untouched, which is what makes
