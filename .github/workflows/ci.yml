@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -24,16 +24,24 @@ jobs:
         with:
           persist-credentials: false
 
-      # There is no compiler here to catch a typo, so the shell scripts are
-      # the thing most likely to break silently. shellcheck is preinstalled on
-      # the ubuntu runner image.
-      - name: shellcheck
-        run: shellcheck setup/install.sh
+      # shellcheck is preinstalled on the runner image -- currently 0.9.0.
+      # actionlint and zizmor are pinned and installed.
 
-      - name: zizmor
-        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
-        with:
-          # Audit the action definitions too, not only .github/workflows --
-          # this repository *is* actions, so that is most of what there is.
-          inputs: .
-          advanced-security: false
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf actionlint.tar.gz actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+          rm -f actionlint actionlint.tar.gz
+
+      - name: Install zizmor
+        env:
+          ZIZMOR_VERSION: 1.30.1
+        run: pipx install "zizmor==${ZIZMOR_VERSION}"
+
+      - name: Check
+        run: make check

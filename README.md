@@ -103,6 +103,23 @@ command-line flag at all.
 
 TBD
 
+## Developing
+
+```sh
+make            # list the rules
+make check      # everything CI runs, in CI's order
+```
+
+CI runs `make check` and nothing else, so what is checked here and what is
+checked on a runner cannot drift. Tool *versions* still can — see the note at
+the top of the `Makefile`. You need `shellcheck`, `actionlint` and `zizmor`
+on your `PATH`.
+
+`make test` exercises `setup/install.sh` against real markfluence releases,
+so it needs network access. That is deliberate: the thing under test is a
+downloader, and a test that stubbed the download would only prove the stub
+works.
+
 ## License
 
 [Mozilla Public License 2.0](LICENSE), matching markfluence.
