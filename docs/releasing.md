@@ -10,54 +10,38 @@ moves the major tag, and you write the release notes.
 > cut yet, so nothing below has run end to end. Expect the first attempt to
 > turn something up. Deleting this note is part of cutting `v1.0.0`.
 
-## Prerequisite: the org Actions allowlist
+## The org Actions allowlist: not a problem
 
-**Unverified, and it gates everything.** `mozilla` sets
-`allowed_actions: selected` with an org-wide allowlist, inherited here.
-Local references (`./`, `$/`) are always permitted and `./**` is on the list
-explicitly, so `ci.yml`, `release.yml` and `smoke.yml`'s `at-ref` job are
-fine. **`mozilla/markfluence-action@*` is not on the list.**
+Recorded because it looked like one, and the inference was wrong.
 
-GitHub's documentation says local actions are always allowed; it says nothing
-about `owner/repo@ref` pointing at the *same* repository. The allowlist
-naming `mozilla/tf-actions/matrixify@main` and `mozilla-it/deploy-actions/...`
-explicitly is strong evidence that mozilla-owned actions are **not**
-blanket-allowed.
+`mozilla` sets `allowed_actions: selected` with an org-wide allowlist, and
+`mozilla/markfluence-action@*` is **not** on it. That reads like a blocker:
+GitHub documents local `./` and `$/` references as always permitted and says
+nothing about the `owner/repo@ref` form, and the allowlist names
+`mozilla/tf-actions/matrixify@main` and `mozilla-it/deploy-actions/...`
+explicitly — which looks like evidence that each mozilla-owned action has to
+be listed.
 
-**A reference to this repository's own actions is exempt.** Measured:
-`smoke.yml`'s `at-main` job passed with
-`Download action repository 'mozilla/markfluence-action@main'`, so the
-`owner/repo@ref` form pointing at the same repository is allowed even though
-the pattern is absent from the list. GitHub documents that for `./` and `$/`
-and is silent about this form; it behaves the same way.
+**It is not.** Measured twice:
 
-**What is still unknown is whether a *consumer* can use it**, and that is the
-part that matters. A consumer is a different repository, which is a different
-case, and nothing here can test it — every job in `smoke.yml` is same-repo by
-construction, `at-major` included. The evidence is circumstantial: the
-allowlist names `mozilla/tf-actions/matrixify@main` and
-`mozilla-it/deploy-actions/...` explicitly, which it would not need to if
-mozilla-owned actions were blanket-allowed cross-repo.
+- **Same repository.** `smoke.yml`'s `at-main` job resolves
+  `mozilla/markfluence-action@main` and passes.
+- **Cross repository**, which is the case that actually matters.
+  [`mozilla/markfluence-demo`](https://github.com/mozilla/markfluence-demo) is
+  under the same `selected` policy, and a workflow there using
+  `uses: mozilla/markfluence-action@main`
+  [worked](https://github.com/mozilla/markfluence-demo/actions/runs/35644680004)
+  — *Set up job* shows `Download action repository
+  'mozilla/markfluence-action@main'` rather than a refusal, and the run went
+  on to publish a page.
 
-If the policy does refuse a consumer, the action is unusable inside Mozilla
-however well it works, and fixing it needs **org-admin** access — repo admin
-is not enough. Answering it takes one throwaway workflow in another
-repository:
+So mozilla-owned actions are permitted cross-repo without being listed, and
+nothing needs adding. Whatever those explicit entries are for, they are not a
+counterexample to what was measured. (#4, closed.)
 
-```yaml
-- uses: mozilla/markfluence-action/setup@main
-```
-
-Tracked as [#4](https://github.com/mozilla/markfluence-action/issues/4).
-
-Check the current state with:
-
-```sh
-gh api repos/mozilla/markfluence-action/actions/permissions/selected-actions \
-  --jq '.patterns_allowed | map(select(test("markfluence")))'
-```
-
-An empty result means it is still missing.
+Worth keeping in mind if this ever changes: a policy refusal surfaces during
+*Set up job*, before any step runs, and names the action and the calling
+repository. It does not look like anything else, so there is no need to guess.
 
 ## Versioning
 
@@ -248,10 +232,19 @@ log will happily show you a green-looking tail from a red run.
   (the remote fetch, which is what a consumer does), and `at-major` (`v1`
   itself, gated behind `-f major=true`).
 
+**[`mozilla/markfluence-demo`](https://github.com/mozilla/markfluence-demo)
+covers, end to end and for real:** a consumer repository publishing a page to
+Confluence on a push, through the remote action fetch. Not automated from here
+and not a gate on a release, but it is the one thing that exercises everything
+at once —
+[an example run](https://github.com/mozilla/markfluence-demo/actions/runs/35644680004)
+resolved the push range, narrowed it to the single changed file, and published
+it.
+
 **Nothing covers:**
-- **Publishing to Confluence.** `tests/publish_test.sh` stubs markfluence
-  entirely, so nothing here has ever published a page. An integration workflow
-  against a live instance is the missing piece.
+- **Publishing, from inside this repository.** `tests/publish_test.sh` stubs
+  markfluence entirely. The demo above is a separate repository that nobody is
+  obliged to keep working, so a release is not gated on it.
 - **Whether `latest` resolves to a *working* markfluence.** The installer smoke
   test runs `--version`, not a publish.
 
@@ -261,7 +254,10 @@ credentials before it looks at the flag and exits 2 without them, so a dry run
 writes nothing to Confluence but still has to reach it.
 
 So: run step 2. It is the only thing standing between a green `make check` and
-an action that does not work.
+an action that does not work — and if a release changes how files are selected
+or published, watch
+[markfluence-demo](https://github.com/mozilla/markfluence-demo) afterwards,
+since that is where it shows up for a real consumer.
 
 ## If a release goes wrong
 
@@ -321,3 +317,4 @@ Not done yet, and optional. What it needs, verified against GitHub's docs:
 - [Immutable releases and tags](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/using-immutable-releases-and-tags-to-manage-your-actions-releases) — why `vX.Y.Z` gets a Release and `v1` does not
 - [Publishing in the Marketplace](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-the-github-marketplace)
 - [markfluence's own runbook](https://github.com/mozilla/markfluence/blob/main/docs/releasing.md) — a different shape, because it ships binaries
+- [mozilla/markfluence-demo](https://github.com/mozilla/markfluence-demo) — a real consumer, and the only end-to-end publish there is
