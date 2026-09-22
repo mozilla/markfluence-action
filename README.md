@@ -47,18 +47,61 @@ Example:
     CONFLUENCE_CLOUD_ID: ${{ vars.CONFLUENCE_CLOUD_ID }}
 ```
 
+Store all three as [encrypted secrets][secrets] — never commit them. The cloud
+ID is not sensitive, so make it a repository **variable** instead.
+
+**Use a [service account][svcacct] API token, not your own personal API
+token.** Published pages are authored by whoever owns the token, so a personal
+one puts your name on every page a workflow touches. Additionally, publishing
+breaks the day that person rotates their token or leaves.
+
+A service account means a **scoped** token, which is why `CONFLUENCE_CLOUD_ID`
+is needed — a scoped token is rejected with a 401 against your site domain, so
+markfluence has to use Atlassian's `api.atlassian.com` gateway, and the cloud
+ID is required there.
+
+[secrets]: https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions
+[svcacct]: https://support.atlassian.com/user-management/docs/understand-service-accounts/
+
 See also:
 
-* [Using with GitHub Actions](https://github.com/mozilla/markfluence/blob/main/docs/github-actions.md)
 * [Scoped tokens and service accounts](https://github.com/mozilla/markfluence/blob/main/README.md#scoped-tokens-and-service-accounts)
+  — the scope list, how to find your cloud ID, and how to tell a missing scope
+  (401) from a missing permission (403)
+
+## Use this action only if the repository is the source of truth
+
+A publishing workflow only makes sense when **the repository is authoritative
+and the Confluence page is a published copy of it.**
+
+If Confluence is the source of truth, **do not run this.** markfluence has no
+way to discover changes made in the Confluence UI and no mechanism for
+reconciling them.
+
+If the repository is the source of truth, it's best to include a note at the
+top of the page and a link to the source file so users know where to make
+changes in a way that doesn't get clobbered on the next publish.
+
+```markdown
+> [!NOTE]
+> This page is published from [docs/deploy-runbook.md](https://github.com/ORG/REPO/blob/main/docs/deploy-runbook.md).
+> Edits made here are overwritten on the next push. Open a pull request instead.
+```
+
+Additionally, you can restrict permissions on the Confluence page to just
+the publishing account.
 
 ## mozilla/markfluence-action (publish)
 
-This publishes every markdown file that changed, matches `files` argument, and
-names a Confluence page — via a page_id in its frontmatter or an entry in
-`markfluence.yaml`. A file that names no page is skipped, not failed, so a
-repository that has markdown files that aren't intended to be published to
-Confluence does the right hings and doesn't cause errors.
+This publishes every markdown file that changed, matches the `files` pathspec,
+and **names a Confluence page** — via a `page_id` in its frontmatter or an
+entry in `markfluence.yaml`. You need that id before a workflow can publish
+anything, which means creating each page once by hand and committing the id;
+see [What it does not do](#what-it-does-not-do).
+
+A file that names no page is skipped, not failed, so a repository that has
+markdown files that aren't intended to be published to Confluence does not
+cause errors.
 
 ```yaml
 name: Publish docs to Confluence
@@ -180,8 +223,17 @@ files that get published.
 published after a merge.
 
 `changed-only` ensures that only the files listed in `files` that actually
-changed are published. Otherwise every merge republishes the whole tree to
-Confluence creating a new version of the page and emailing every watcher.
+changed are published. Otherwise one typo fix republishes the whole tree, which
+costs more than tidiness:
+
+- **Confluence emails every watcher on update.** Republishing 200 pages mails
+  everyone watching any of them, for a change to one. This is the cost that
+  gets a publishing bot switched off.
+- **Page history stops being useful.** A run of identical new versions across
+  the tree makes "who changed this, and why" unanswerable in the UI.
+- **It is N times the API calls**, against a rate limit shared with everyone
+  else on the instance, and a correspondingly slow job.
+
 **Turn it off only if you mean it.**
 
 **An event with no commit range fails rather than guessing.** A `schedule` or
@@ -194,10 +246,41 @@ if you really do mean the whole tree.
 
 CI is the arrangement where the repository is the source of truth, so an edit
 made in the Confluence UI is drift rather than work, and the next publish is
-meant to overwrite it. Without `--force`, whether a page publishes depends on
-a local action log that a fresh checkout does not have, so files get reported
-`skipped` for a reason nobody in CI can act on. An action that can be
-configured into that state is a trap, so this one cannot be.
+meant to overwrite it.
+
+**`--force` means "always publish", and nothing can suppress the request.** It
+overrides *both* checks `markfluence update` makes without it:
+
+- the refusal to overwrite a page that has moved on since your copy was made,
+  and
+- the skip when the page already holds exactly what the file renders to.
+
+The second is why it is not optional here rather than merely convenient: that
+check compares against a
+[local action log](https://github.com/mozilla/markfluence/blob/main/docs/root-model.md#markfluence-local-state-not-committed)
+which is per-checkout and deliberately not committed — so a fresh CI checkout
+does not have it, and files get reported `skipped` for a reason nobody in CI
+can act on. An action that can be configured into that state is a trap, so
+this one cannot be.
+
+Nothing is lost when a UI edit is overwritten: it is in the page's Confluence
+history, so it can be recovered and applied to the repository properly, which
+is where it should have been made.
+
+### Exit codes and `--json`
+
+The step fails if any file fails, so the job goes red loudly rather than
+reporting a partial publish as success.
+
+**A file nothing claims is skipped, not failed** — it counts in `skipped`, not
+`failed` — so a glob over a docs tree does not turn the job red when somebody
+adds a draft.
+
+`results-json` is the path to markfluence's schema-locked `--json` envelope, if
+a later step needs the per-file detail. `metadata_source` on each result says
+which location supplied that page's metadata, which is what to look at when a
+page lands somewhere unexpected. See
+[`--json` output](https://github.com/mozilla/markfluence/blob/main/README.md#--json-output).
 
 ### What it does not do
 
