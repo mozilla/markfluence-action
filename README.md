@@ -13,6 +13,8 @@ Two actions, because they answer different questions:
 This split facilitates a convenient publish action step and also allows for
 other use cases.
 
+Getting this approved by a security team? See [Permissions](#permissions).
+
 ## Supported runners
 
 | runner | supported |
@@ -69,6 +71,80 @@ See also:
   — the scope list, how to find your cloud ID, and how to tell a missing scope
   (401) from a missing permission (403)
 
+## Permissions
+
+This section is for anyone who has to get these actions approved by a security
+team.  Everything the two actions can do is listed here, and you can check it
+against [`action.yml`](action.yml), [`setup/action.yml`](setup/action.yml),
+[`setup/install.sh`](setup/install.sh) and [`publish/publish.sh`](publish/publish.sh).
+
+### GitHub permissions
+
+**Neither action uses `GITHUB_TOKEN`.** Neither one reads `github.token`,
+calls the GitHub API, or writes to the repository. They never commit, push,
+comment, or change issues, pull requests, releases or settings.
+
+The only GitHub permission a publishing workflow needs is the one
+`actions/checkout` needs to read the repository:
+
+```yaml
+permissions:
+  contents: read
+```
+
+### mozilla/markfluence-action/setup
+
+| needs | why |
+|---|---|
+| HTTPS to `github.com` | To resolve `latest` through the `/releases/latest` redirect, and to download the release archive and `checksums.txt` from [mozilla/markfluence releases](https://github.com/mozilla/markfluence/releases). Downloads follow GitHub's redirect to its release-asset host. No token is sent. |
+| Write to `$RUNNER_TEMP` | To unpack the binary. Nothing is written to the workspace. |
+| Append to `$GITHUB_PATH` | To put `markfluence` on `PATH` for later steps. This is the action's whole purpose. |
+| Append to `$GITHUB_OUTPUT` | To set the `version` output. |
+| Run the downloaded binary | It runs `markfluence --version` as a smoke test. |
+
+It takes no secrets and needs none.
+
+### mozilla/markfluence-action (publish)
+
+It needs everything `setup` needs, because it runs the same installer.
+It also needs:
+
+| needs | why |
+|---|---|
+| Read the checked-out repository | It runs `git diff` and `git ls-files` to choose which files to publish. It never changes the repository. |
+| Read event data | It reads `github.event.before` to find the commit range of the push. |
+| `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_TOKEN` secrets, and the `CONFLUENCE_CLOUD_ID` variable | markfluence reads them from the environment of the step. They are not action inputs, so they never appear in the action's inputs or logs. |
+| HTTPS to Confluence | To `api.atlassian.com` when using a scoped token, which is the recommended setup, or to `CONFLUENCE_URL` otherwise. |
+| Append to `$GITHUB_OUTPUT` and `$GITHUB_STEP_SUMMARY`, and write to `$RUNNER_TEMP` | To set the step outputs, write the run summary, and keep the `--json` results file. |
+
+### Confluence permissions
+
+The Confluence token needs [the scopes markfluence lists][scopes]. The
+service account behind the token needs edit permission on the pages it
+publishes and nothing more. You can restrict each page so only that
+account can edit it.
+
+What the publish action does in Confluence:
+
+- **It updates existing pages**, always with `--force`. See [`--force` is
+  always on](#--force-is-always-on-and-is-not-an-input).
+- **It never creates or deletes pages.** See [What it does not do](#what-it-does-not-do).
+- **It only writes when files changed.** With `changed-only` on (the
+  default), it only updates pages whose source files changed in the commit
+  range.
+
+### Trust boundary
+
+The binary that runs is whatever markfluence release you choose with
+`version:`. The checksum check catches a corrupted or truncated download.
+It does **not** catch a compromised release, because `checksums.txt` comes
+from the same release. In the publish action, that binary runs with the
+Confluence credentials in its environment. If your policy requires a
+reproducible, reviewed binary, pin both `uses:` to a commit SHA and
+`version:` to a specific tag. See [Pinning](#pinning).
+
+[scopes]: https://github.com/mozilla/markfluence/blob/main/README.md#scoped-tokens-and-service-accounts
+
 ## Use this action only if the repository is the source of truth
 
 A publishing workflow only makes sense when **the repository is authoritative
@@ -116,6 +192,9 @@ concurrency:
   group: confluence-publish
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -141,7 +220,7 @@ says so by name rather than failing on a confusing `bad object`.
 | input | default | description |
 |---|---|---|
 | `files` | `docs/**/*.md` | Which markdown to publish, as one or more git pathspecs. See [How `files` works](#how-files-works). |
-| `changed-only` | `true` | Publish only what changed. Leave it on — see below. Works on `push` and `pull_request`; any other event has no commit range and the run fails rather than publishing everything. |
+| `changed-only` | `true` | Publish only what changed. Leave it on — see below. Works on `push`; any other event has no commit range and the run fails rather than publishing everything. |
 | `since` | *(none)* | Base ref to diff against, overriding the event's. Required on an event with no range, such as `workflow_dispatch` or `schedule`. |
 | `dry-run` | `false` | Preview without writing to Confluence. |
 | `debug` | `false` | Log every retry decision with the rate-limit headers. |
